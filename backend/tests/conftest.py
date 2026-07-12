@@ -17,6 +17,21 @@ migration path used in production (see migrations/versions/
 0001_baseline_schema.py), rather than assuming it works.
 """
 import os
+import sys
+from pathlib import Path
+
+# Makes `app.*` reliably importable regardless of how pytest is invoked.
+# `python -m pytest` (used throughout local/manual testing) automatically
+# prepends the current directory to sys.path, so `from app.security import
+# ...` just works — but CI's plain `pytest ...` invocation does not, which
+# caused exactly that ModuleNotFoundError for every test module importing
+# `app.*` at the top level (some other test files only imported `app.*`
+# lazily inside function bodies and so didn't hit this at collection time,
+# which is why it looked like only some files were affected). conftest.py is
+# always loaded before any test module is collected, so fixing it here
+# covers every test file consistently, independent of the invocation style.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from types import SimpleNamespace
 
 import pytest
