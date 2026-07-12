@@ -1,0 +1,85 @@
+# HRFlow — Docker Compose
+# Matches the RFP's deployment architecture (§Technology Stack Overview /
+# §Deployment Architecture Diagram):
+#   Local / Docker Environment: FastAPI Backend (Uvicorn) + PostgreSQL +
+#   ChromaDB (+ RAG pipeline). The React frontend is NOT containerised here —
+#   per the RFP it's hosted on Azure Static Web Apps in the cloud; for local
+#   dev just keep running it with `npm run dev` (Vite) as before, pointed at
+#   http://localhost:8000.
+#
+# Usage:
+#   docker compose up -d --build       # start db + backend + chromadb
+#   docker compose logs -f backend     # tail backend logs
+#   docker compose exec backend python seed.py   # seed demo data (once)
+#   docker compose down                # stop (add -v to also wipe data)
+
+services:
+  db:
+    image: postgres:18
+    container_name: hrflow_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hrflow_user
+      POSTGRES_PASSWORD: hrflow_pass_RK
+      POSTGRES_DB: hrflow
+    ports:
+      - "5432:5432"      # exposed so pgAdmin can still connect like before
+    volumes:
+      - pgdata:/var/lib/postgresql
+      # Schema is now applied by Alembic (backend/entrypoint.sh runs
+      # `alembic upgrade head` on startup) — not auto-run by Postgres via
+      # docker-entrypoint-initdb.d anymore. db/schema.sql still exists as
+      # the human-readable reference the baseline migration was captured
+      # from (see backend/migrations/versions/0001_baseline_schema.py).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrflow_user -d hrflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: hrflow_chromadb
+    restart: unless-stopped
+    ports:
+      - "8001:8000"      # host 8001 → container 8000 (backend already uses host 8000)
+    volumes:
+      - chroma_data:/chroma/chroma
+
+  backend:
+    build: ./backend
+    container_name: hrflow_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+psycopg2://hrflow_user:hrflow_pass_RK@db:5432/hrflow
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-before-deploying}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRES_MINUTES: 480
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      USE_MOCK_SSO: ${USE_MOCK_SSO:-true}
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+      ENTRA_HR_ADMIN_GROUP_ID: ${ENTRA_HR_ADMIN_GROUP_ID:-}
+      ENTRA_IT_ADMIN_GROUP_ID: ${ENTRA_IT_ADMIN_GROUP_ID:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL_NAME: ${GEMINI_MODEL_NAME:-gemini-flash-latest}
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      CHROMA_COLLECTION: hr_policy_docs
+      EMBEDDING_MODEL_NAME: sentence-transformers/all-MiniLM-L6-v2
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_NAME: HRFlow Portal
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
+  chroma_data:
