@@ -466,7 +466,7 @@ function UploadModal({ open, onClose, onSuccess }) {
           {loading ? 'Uploading…' : 'Upload & Index'}
         </button>
       </>}>
-      <Alert type="info" message="Upload a plain text (.txt) file. The content will be chunked and indexed for chatbot search." />
+      <Alert type="info" message="Upload a PDF or plain text (.txt) file. PDFs are extracted via PyMuPDF; the content is then chunked and indexed for chatbot search." />
       <Alert type="error" message={error} onDismiss={() => setError('')} />
       <FormField label="Document Name" required>
         <input className="input" value={name} onChange={e => setName(e.target.value)}
@@ -479,8 +479,8 @@ function UploadModal({ open, onClose, onSuccess }) {
           ))}
         </select>
       </FormField>
-      <FormField label="File (.txt)" required>
-        <input type="file" accept=".txt" className="input py-1.5"
+      <FormField label="File (PDF or .txt)" required>
+        <input type="file" accept=".pdf,.txt" className="input py-1.5"
           onChange={e => setFile(e.target.files?.[0] || null)} />
       </FormField>
       {file && <p className="text-xs text-gray-500">Selected: {file.name} ({(file.size/1024).toFixed(1)} KB)</p>}
