@@ -1,11 +1,20 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
+import { useMsal } from '@azure/msal-react'
 import { authApi } from '../api/services'
+import { USE_MOCK_SSO } from '../auth/msalConfig'
 
 const AuthContext = createContext(null)
 
 const WS_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/^http/, 'ws')
 
 export function AuthProvider({ children }) {
+  // useMsal() requires an MsalProvider ancestor, which only exists in real
+  // SSO mode (see main.jsx) — USE_MOCK_SSO is fixed for the whole app
+  // lifetime (never toggles at runtime), so this conditional call is safe
+  // despite normally violating the rules of hooks.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const msal = USE_MOCK_SSO ? null : useMsal()
+
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hrflow_user')) } catch { return null }
   })
@@ -53,7 +62,23 @@ export function AuthProvider({ children }) {
     setUser(null)
     setActingIdentity(null)
     wsRef.current?.close()
-  }, [])
+    // Clear MSAL's own cached account too — without this, the moment the
+    // app lands back on /login, MicrosoftLoginButton's effect sees MSAL
+    // still has an account cached and silently signs back in via
+    // acquireTokenSilent, making "Sign Out" look like it does nothing at
+    // all. `onRedirectNavigate: () => false` tells MSAL to clear its local
+    // cache without actually navigating to Microsoft's global sign-out page
+    // — this signs out of *this app* only, not the person's whole Microsoft
+    // session (which is what "Sign Out" should mean here, and avoids
+    // needing a separate registered post-logout redirect URI).
+    if (msal?.instance) {
+      const account = msal.accounts[0]
+      msal.instance.logoutRedirect({
+        account,
+        onRedirectNavigate: () => false,
+      })
+    }
+  }, [msal])
 
   // Real-time in-portal notifications (FastAPI WebSocket) — falls back to
   // nothing if the socket can't connect; the polling GET /notifications
