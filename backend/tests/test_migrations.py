@@ -61,7 +61,7 @@ def test_alembic_upgrade_head_creates_full_schema(scratch_db):
     engine.dispose()
 
     assert table_count > 50  # the full 53-table schema, plus alembic_version
-    assert version == "0001"
+    assert version == "0002"
 
 
 def test_alembic_upgrade_head_is_idempotent(scratch_db):
@@ -89,3 +89,24 @@ def test_alembic_downgrade_drops_everything(scratch_db):
     # be gone.
     assert table_count == 1
     assert version_rows == 0
+
+
+def test_attendance_policy_document_type_is_valid(scratch_db):
+    """Regression test: uploading an 'attendance_policy' document used to
+    fail with a raw CheckViolation, because the frontend's upload form
+    offered it as a selectable type while the DB constraint never allowed
+    it. Confirms revision 0002 actually fixes that."""
+    command.upgrade(_alembic_config(scratch_db), "head")
+    engine = create_engine(scratch_db)
+    with engine.connect() as conn:
+        conn.execute(text(
+            "INSERT INTO organisations (org_name, org_code, currency_code) "
+            "VALUES ('Test', 'T1', 'INR')"
+        ))
+        conn.execute(text(
+            "INSERT INTO hr_policy_documents "
+            "(org_id, document_name, document_type, file_path, is_active, indexed_in_chromadb) "
+            "VALUES (1, 'Attendance Test', 'attendance_policy', 'x.txt', true, false)"
+        ))
+        conn.commit()
+    engine.dispose()
