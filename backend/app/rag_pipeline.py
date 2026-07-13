@@ -1,20 +1,28 @@
 """
 Real RAG pipeline for the HR Policy Chatbot (Module 5).
 
-Stack, exactly as specified in the proposal:
+Stack, per the proposal, with one deliberate substitution:
   PyMuPDF (text extraction) -> LangChain RecursiveCharacterTextSplitter
-  (chunking) -> Sentence-Transformers all-MiniLM-L6-v2 (embeddings) ->
-  ChromaDB (vector store, via the `chromadb` container in docker-compose.yml)
-  -> LangChain retriever -> Gemini 2.5 Flash (grounded answer generation).
+  (chunking) -> Gemini embeddings API (embeddings, via GoogleGenerativeAIEmbeddings —
+  see note below) -> ChromaDB (vector store) -> LangChain retriever ->
+  Gemini 2.5 Flash (grounded answer generation).
+
+Embeddings were originally Sentence-Transformers all-MiniLM-L6-v2, run
+locally in-process. That was swapped for a Gemini embeddings API call after
+the local model load (PyTorch + the model itself) was found to exceed the
+memory available on a free-tier host running the FastAPI backend (e.g.
+Render's 512MB RAM / 0.1 CPU web service), silently killing the embedding
+step mid-request with no error surfaced to the caller. An API call keeps
+that work on Google's infrastructure instead of this process, at the cost
+of needing network access and a Gemini API key for indexing (not just for
+answer generation, as before).
 
 This module is the single place that talks to Chroma/LangChain/the
 embedding model, so routers/chatbot.py stays thin. If the optional heavy
-dependencies (chromadb / sentence-transformers / langchain) aren't
-installed, or the ChromaDB service isn't reachable, `is_available()`
+dependencies (chromadb / langchain) aren't installed, the ChromaDB service
+isn't reachable, or no Gemini API key is configured, `is_available()`
 returns False and the caller (routers/chatbot.py) transparently falls back
-to a SQL keyword-search retriever instead of crashing the request - useful
-for a lightweight local dev loop, but the default `docker compose up` stack
-has everything needed for the real pipeline to run.
+to a SQL keyword-search retriever instead of crashing the request.
 """
 from __future__ import annotations
 
@@ -29,7 +37,7 @@ _import_error: str | None = None
 try:
     import chromadb
     from chromadb.config import Settings as ChromaSettings
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
     from langchain_chroma import Chroma
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from langchain_core.documents import Document
@@ -39,8 +47,15 @@ except Exception as e:  # pragma: no cover - exercised only when deps are missin
 
 @lru_cache(maxsize=1)
 def _embeddings():
-    """Sentence-Transformers all-MiniLM-L6-v2, loaded once per process."""
-    return HuggingFaceEmbeddings(model_name=settings.EMBEDDING_MODEL_NAME)
+    """Gemini embeddings API — see module docstring for why this replaced a
+    locally-loaded Sentence-Transformers model. Needs a Gemini API key just
+    like answer generation does; if it's missing, this raises and
+    is_available() below catches it, falling back to keyword search same as
+    if ChromaDB itself were unreachable."""
+    gemini_key = settings.GEMINI_API_KEY
+    if not gemini_key:
+        raise RuntimeError("GEMINI_API_KEY is required for embeddings (no local embedding model configured)")
+    return GoogleGenerativeAIEmbeddings(model=settings.GEMINI_EMBEDDING_MODEL_NAME, google_api_key=gemini_key)
 
 
 @lru_cache(maxsize=1)

@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     # bumped by hand every time Google retires a dated model name (e.g.
     # gemini-2.5-flash returning 404/zero-quota for newer accounts).
     GEMINI_MODEL_NAME: str = "gemini-flash-latest"
+    # Embeddings via Gemini's own API instead of a locally-loaded
+    # Sentence-Transformers model (all-MiniLM-L6-v2, as originally specified) —
+    # switched because loading PyTorch + the model in-process needs more
+    # memory than a free-tier host (e.g. Render's 512MB RAM / 0.1 CPU web
+    # service) reliably has available, which was silently killing the
+    # embedding step mid-request. An API call has a far smaller footprint on
+    # our own server since the model runs on Google's infrastructure instead.
+    GEMINI_EMBEDDING_MODEL_NAME: str = "models/gemini-embedding-001"
 
     # ── Microsoft Entra ID SSO ───────────────────────────────────────────────
     # Register an app in your Azure tenant (Azure Portal → Entra ID → App
@@ -47,7 +55,6 @@ class Settings(BaseSettings):
     # proxy on port 443, not plain HTTP.
     CHROMA_SSL: bool = False
     CHROMA_COLLECTION: str = "hr_policy_docs"
-    EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # ── Email (SMTP) ──────────────────────────────────────────────────────────
     # Leave blank to disable email (app still works — emails are logged to console)

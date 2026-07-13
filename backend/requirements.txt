@@ -15,13 +15,16 @@ httpx==0.27.2
 PyMuPDF==1.24.11
 
 # RAG pipeline (Module 5): ChromaDB vector store + LangChain orchestration +
-# Sentence-Transformers embeddings, exactly as specified in the proposal.
+# Sentence-Transformers removed — embeddings now go through Gemini's API
+# instead of a locally-loaded model (see rag_pipeline.py docstring for why:
+# loading PyTorch + the model in-process exceeded available memory on a
+# free-tier host). This also meaningfully shrinks the Docker image and
+# speeds up every deploy, since sentence-transformers pulled in torch as a
+# transitive dependency.
 chromadb==0.5.15
 langchain==0.3.7
-langchain-community==0.3.5
 langchain-chroma==0.1.4
 langchain-google-genai==2.0.4
-sentence-transformers==3.2.1
 google-generativeai==0.8.3
 
 # QA (Section 10 - mandatory)
