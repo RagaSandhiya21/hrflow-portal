@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # ── RAG pipeline (Module 5) ──────────────────────────────────────────────
     CHROMA_HOST: str = "localhost"
     CHROMA_PORT: int = 8001
+    # False for local Docker Compose (plain HTTP between sibling containers);
+    # set to true when CHROMA_HOST points at a separately-hosted ChromaDB
+    # service reached over the public internet (e.g. a second Render web
+    # service), since that traffic goes through Render's HTTPS-terminating
+    # proxy on port 443, not plain HTTP.
+    CHROMA_SSL: bool = False
     CHROMA_COLLECTION: str = "hr_policy_docs"
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
 

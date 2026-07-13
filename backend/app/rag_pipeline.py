@@ -48,6 +48,7 @@ def _chroma_client():
     return chromadb.HttpClient(
         host=settings.CHROMA_HOST,
         port=settings.CHROMA_PORT,
+        ssl=settings.CHROMA_SSL,
         settings=ChromaSettings(anonymized_telemetry=False),
     )
 
