@@ -4,6 +4,7 @@ import {
   Send, AlertTriangle, CheckCircle, FileText, ArrowUp, RefreshCw, Upload, MessageSquareDiff,
 } from 'lucide-react'
 import { chatbotApi } from '../../api/services'
+import api from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
 import { EmptyState, StatusBadge, Modal, Alert, FormField } from '../../components/ui'
 
@@ -447,15 +448,16 @@ function UploadModal({ open, onClose, onSuccess }) {
       form.append('document_name', name)
       form.append('document_type', type)
       form.append('file', file)
-      const token = localStorage.getItem('hrflow_token')
-      const res = await fetch('/api/chatbot/policy-docs/upload', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: form,
-      })
-      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Upload failed') }
+      // Uses the shared `api` client (see src/api/client.js) instead of a
+      // raw fetch() with a hardcoded '/api/...' path — that hardcoded path
+      // silently ignored VITE_API_URL, so in any deployment where the
+      // frontend and backend are on different domains (e.g. Azure Static
+      // Web Apps + Render), every upload was actually being sent to the
+      // frontend's own domain instead of the real backend, and failing with
+      // an empty response no matter what file was selected.
+      await api.post('/chatbot/policy-docs/upload', form)
       onSuccess()
-    } catch (e) { setError(e.message || 'Upload failed') }
+    } catch (e) { setError(e.response?.data?.detail || e.message || 'Upload failed') }
     finally { setLoading(false) }
   }
   return (
