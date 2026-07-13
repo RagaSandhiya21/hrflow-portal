@@ -85,6 +85,7 @@ export const itRequestApi = {
 // ── Chatbot ───────────────────────────────────────────────────────────────────
 export const chatbotApi = {
   policyDocs:          ()            => api.get('/chatbot/policy-docs'),
+  deletePolicyDoc:     (id)          => api.delete(`/chatbot/policy-docs/${id}`),
   query:               (data)        => api.post('/chatbot/query', data),
   escalate:            (data)        => api.post('/chatbot/escalate', data),
   myEscalations:       ()            => api.get('/chatbot/escalations/mine'),

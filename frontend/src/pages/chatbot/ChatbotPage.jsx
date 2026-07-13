@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { format } from 'date-fns'
 import {
-  Send, AlertTriangle, CheckCircle, FileText, ArrowUp, RefreshCw, Upload, MessageSquareDiff,
+  Send, AlertTriangle, CheckCircle, FileText, ArrowUp, RefreshCw, Upload, MessageSquareDiff, Trash2,
 } from 'lucide-react'
 import { chatbotApi } from '../../api/services'
 import api from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
-import { EmptyState, StatusBadge, Modal, Alert, FormField } from '../../components/ui'
+import { EmptyState, StatusBadge, Modal, Alert, FormField, Confirm } from '../../components/ui'
 
 export default function ChatbotPage() {
   const { isHRAdmin, user } = useAuth()
@@ -20,6 +20,7 @@ export default function ChatbotPage() {
   const [escalations, setEscalations] = useState([])
   const [myEscalations, setMyEscalations] = useState([])
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [deleteDocTarget, setDeleteDocTarget] = useState(null)
   const [respondTarget, setRespondTarget] = useState(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -377,11 +378,38 @@ export default function ChatbotPage() {
                 <span className={`badge ${d.indexed_in_chromadb ? 'badge-green' : 'badge-yellow'}`}>
                   {d.indexed_in_chromadb ? 'ChromaDB' : 'Keyword search'}
                 </span>
+                <button
+                  className="p-2 rounded-lg border border-gray-300 bg-white text-red-500 hover:bg-red-50 shrink-0"
+                  title="Remove this document"
+                  onClick={() => setDeleteDocTarget(d)}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             ))}
           </div>
         </div>
       )}
+
+      <Confirm
+        open={!!deleteDocTarget}
+        onClose={() => setDeleteDocTarget(null)}
+        title="Remove policy document?"
+        message={`This removes "${deleteDocTarget?.document_name}" (Doc #${deleteDocTarget?.document_id}) from the chatbot's search index. This can't be undone.`}
+        confirmLabel="Remove"
+        danger
+        onConfirm={async () => {
+          try {
+            await chatbotApi.deletePolicyDoc(deleteDocTarget.document_id)
+            setSuccess(`"${deleteDocTarget.document_name}" removed.`)
+            setDeleteDocTarget(null)
+            loadData()
+          } catch (e) {
+            setError(e.response?.data?.detail || 'Failed to remove document')
+            setDeleteDocTarget(null)
+          }
+        }}
+      />
 
       {/* Respond Modal */}
       <RespondModal
