@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
 import { useAuth } from '../context/AuthContext'
@@ -123,6 +123,15 @@ function MicrosoftLoginButton() {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // `accounts` is an array from useMsal() that can get a *new* reference on
+  // every MSAL-internal event even when its contents haven't changed —
+  // using it directly as an effect dependency caused the effect to refire
+  // repeatedly (retrying acquireTokenSilent in a tight loop, flickering the
+  // error state on/off faster than it could be read or dismissed). Depending
+  // on the primitive `accounts.length` instead avoids that, and this ref
+  // adds a second, belt-and-suspenders guard: try the silent token exchange
+  // at most once per page load, full stop.
+  const attemptedRef = useRef(false)
 
   // loginRedirect (full-page redirect) rather than loginPopup: popups hit a
   // known MSAL.js "hash_empty_error" on some static hosts, because the
@@ -133,6 +142,8 @@ function MicrosoftLoginButton() {
   // does anything else.
   useEffect(() => {
     if (inProgress !== 'none' || accounts.length === 0) return
+    if (attemptedRef.current) return
+    attemptedRef.current = true
     let cancelled = false
     ;(async () => {
       setLoading(true)
@@ -149,7 +160,8 @@ function MicrosoftLoginButton() {
       }
     })()
     return () => { cancelled = true }
-  }, [inProgress, accounts, instance, ssoLogin, navigate])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inProgress, accounts.length, instance, ssoLogin, navigate])
 
   function handleMicrosoftLogin() {
     setError('')
