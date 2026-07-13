@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMsal } from '@azure/msal-react'
 import { useAuth } from '../context/AuthContext'
@@ -114,24 +114,50 @@ function MockLoginForm() {
 }
 
 function MicrosoftLoginButton() {
-  const { instance } = useMsal()
+  // `accounts`/`inProgress` come from MsalProvider, which automatically
+  // processes the redirect response (calls handleRedirectPromise()
+  // internally) whenever the page reloads after Microsoft sends the user
+  // back here — see the effect below.
+  const { instance, accounts, inProgress } = useMsal()
   const { ssoLogin } = useAuth()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  async function handleMicrosoftLogin() {
-    setLoading(true)
+  // loginRedirect (full-page redirect) rather than loginPopup: popups hit a
+  // known MSAL.js "hash_empty_error" on some static hosts, because the
+  // popup's own page load can clear window.location.hash (via client-side
+  // routing) before MSAL gets a chance to read the auth response out of it.
+  // Redirect flow avoids that whole class of timing issue — MsalProvider
+  // reads the response once, on the full page reload, before our router
+  // does anything else.
+  useEffect(() => {
+    if (inProgress !== 'none' || accounts.length === 0) return
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const result = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] })
+        if (cancelled) return
+        await ssoLogin(result.idToken)
+        navigate('/', { replace: true })
+      } catch (err) {
+        if (!cancelled) setError(err.response?.data?.detail || err.message || 'Microsoft sign-in failed')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [inProgress, accounts, instance, ssoLogin, navigate])
+
+  function handleMicrosoftLogin() {
     setError('')
-    try {
-      const result = await instance.loginPopup(loginRequest)
-      await ssoLogin(result.idToken)
-      navigate('/', { replace: true })
-    } catch (err) {
-      setError(err.response?.data?.detail || err.message || 'Microsoft sign-in failed')
-    } finally {
-      setLoading(false)
-    }
+    setLoading(true)
+    instance.loginRedirect(loginRequest)
+    // Execution stops here — the browser navigates away to Microsoft's
+    // sign-in page, then back to this same page once signed in, at which
+    // point the effect above picks up the result.
   }
 
   return (
