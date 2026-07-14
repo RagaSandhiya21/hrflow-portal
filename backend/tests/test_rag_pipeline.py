@@ -30,3 +30,11 @@ def test_is_available_false_when_chroma_unreachable():
     pipeline must report unavailable rather than raising — the caller
     (routers/chatbot.py) depends on this to fall back to keyword search."""
     assert rag_pipeline.is_available() is False
+
+
+def test_reindex_all_from_postgres_noop_when_chroma_unreachable(db_session):
+    """The startup self-heal hook (app/main.py) must never block API
+    startup — reindex_all_from_postgres() has to no-op safely (return 0,
+    not raise) when ChromaDB isn't reachable, exactly like every other
+    entry point in this module."""
+    assert rag_pipeline.reindex_all_from_postgres(db_session) == 0

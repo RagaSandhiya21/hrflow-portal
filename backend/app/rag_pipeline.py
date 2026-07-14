@@ -134,6 +134,52 @@ def delete_document(document_id: int) -> None:
     _vectorstore()._collection.delete(where={"document_id": document_id})
 
 
+def reindex_all_from_postgres(db) -> int:
+    """
+    Self-heals ChromaDB after it comes back with an empty collection —
+    which happens on Render's free tier every time the service spins down
+    from inactivity and restarts, since the free tier has no persistent
+    disk (see README's "Database migrations" section neighbour, the
+    ChromaDB deployment notes, for the full explanation). The original
+    extracted chunk text is never at risk — it's stored in Postgres
+    (rag_document_chunks) independently of ChromaDB — so this just re-runs
+    the same embed-and-upsert step index_document() already does, sourced
+    from that safe copy instead of the original uploaded file.
+
+    No-ops (returns 0) if ChromaDB is unreachable, or if it already has
+    data — this is meant to run once at backend startup, cheaply, not to
+    re-embed everything on every boot (which would burn through the Gemini
+    embeddings API's free-tier quota for no reason once data is intact).
+    Caller (app/main.py's startup hook) is expected to swallow any
+    exception from this so a ChromaDB/embedding hiccup never blocks the API
+    itself from starting.
+    """
+    from app.models import HRPolicyDocument, RagDocumentChunk  # local import: avoid a hard dependency for callers that only need the fallback path
+
+    if not is_available():
+        return 0
+    if _vectorstore()._collection.count() > 0:
+        return 0  # already has data — nothing to heal
+
+    documents = db.query(HRPolicyDocument).filter(HRPolicyDocument.is_active.is_(True)).all()
+    reindexed = 0
+    for doc in documents:
+        chunks = (
+            db.query(RagDocumentChunk)
+            .filter(RagDocumentChunk.document_id == doc.document_id)
+            .order_by(RagDocumentChunk.chunk_index)
+            .all()
+        )
+        if not chunks:
+            continue
+        index_document(doc.document_id, doc.org_id, doc.document_name, [c.chunk_text for c in chunks])
+        doc.indexed_in_chromadb = True
+        reindexed += 1
+    if reindexed:
+        db.commit()
+    return reindexed
+
+
 def retrieve(org_id: int, query_text: str, top_k: int = 3) -> list[dict]:
     """
     Embeds the query and runs ChromaDB's similarity search scoped to this

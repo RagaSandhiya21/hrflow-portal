@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.database import SessionLocal
 from app.routers import (
     auth, dashboard, leave, payslips, profile, hr_requests, attendance,
     it_requests, chatbot, notifications, org,
@@ -33,6 +34,34 @@ app.include_router(it_requests.router)
 app.include_router(chatbot.router)
 app.include_router(notifications.router)
 app.include_router(org.router)
+
+
+@app.on_event("startup")
+def self_heal_chromadb():
+    """
+    Render's free tier has no persistent disk for the separately-hosted
+    ChromaDB service, so a restart from inactivity silently wipes its
+    indexed data (see rag_pipeline.reindex_all_from_postgres's docstring).
+    Re-populating it from Postgres — the original chunk text's safe,
+    permanent home — on every boot means a cold-started ChromaDB heals
+    itself before the first chatbot query ever sees it empty, instead of
+    requiring a manual re-upload each time.
+
+    Deliberately best-effort: any failure here (ChromaDB unreachable, no
+    Gemini API key configured, quota exhausted, etc.) is logged and
+    swallowed rather than raised, since this must never prevent the API
+    itself from starting.
+    """
+    from app import rag_pipeline
+    db = SessionLocal()
+    try:
+        count = rag_pipeline.reindex_all_from_postgres(db)
+        if count:
+            print(f"[startup] Re-indexed {count} policy document(s) into ChromaDB after an empty collection was detected.")
+    except Exception as e:
+        print(f"[startup] ChromaDB self-heal skipped: {e}")
+    finally:
+        db.close()
 
 
 @app.get("/health")
