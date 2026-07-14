@@ -114,9 +114,10 @@ def chunk_text(text: str, chunk_size: int = 800, chunk_overlap: int = 120) -> li
 
 def index_document(document_id: int, org_id: int, document_name: str, chunks: list[str]) -> list[str]:
     """
-    Embeds `chunks` with Sentence-Transformers and upserts them into the
-    org's ChromaDB collection. Returns the ChromaDB chunk IDs (persisted in
-    rag_document_chunks.chromadb_chunk_id so we can re-sync / delete later).
+    Embeds `chunks` via the Gemini embeddings API (see module docstring) and
+    upserts them into the org's ChromaDB collection. Returns the ChromaDB
+    chunk IDs (persisted in rag_document_chunks.chromadb_chunk_id so we can
+    re-sync / delete later).
     """
     ids = [f"doc{document_id}-chunk{i}" for i in range(len(chunks))]
     metadatas = [
@@ -140,8 +141,22 @@ def retrieve(org_id: int, query_text: str, top_k: int = 3) -> list[dict]:
     (1 - cosine distance) - this is the real semantic-search replacement for
     the SQL ILIKE fallback in routers/chatbot.py.
     """
-    results = _vectorstore().similarity_search_with_relevance_scores(
+    raw_results = _vectorstore().similarity_search_with_relevance_scores(
         query_text, k=top_k, filter={"org_id": org_id},
+    )
+    # Diagnostic logging: this pipeline intermittently returns zero results
+    # for queries that clearly should match (observed in production —
+    # connects to ChromaDB fine, no exception, just an empty/near-empty
+    # result set on some calls and not others for the identical query).
+    # LangChain's Chroma wrapper is documented to sometimes produce
+    # negative/unreliable relevance scores when the embedding space doesn't
+    # match what its internal score conversion assumes (see
+    # github.com/langchain-ai/langchain/issues/10864) — logging the raw,
+    # pre-clamp scores here is what actually pins that down next time this
+    # happens, instead of guessing again.
+    logger.warning(
+        "RAG retrieve(): query=%r org_id=%s -> %d raw result(s), scores=%s",
+        query_text, org_id, len(raw_results), [round(s, 4) for _, s in raw_results],
     )
     return [
         {
@@ -151,7 +166,7 @@ def retrieve(org_id: int, query_text: str, top_k: int = 3) -> list[dict]:
             "chromadb_chunk_id": doc.id if hasattr(doc, "id") else None,
             "score": max(0.0, min(1.0, score)),
         }
-        for doc, score in results
+        for doc, score in raw_results
     ]
 
 
