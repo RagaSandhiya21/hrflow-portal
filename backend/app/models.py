@@ -309,6 +309,33 @@ class AttendanceRegularisation(Base):
     reviewer_comments = Column(Text)
 
 
+class AttendanceEditLog(Base):
+    """
+    Audit trail for HR Admin's direct attendance corrections (Module 6:
+    'corrections logged with audit trail'). The table has existed in
+    db/schema.sql since the baseline migration, but this SQLAlchemy model
+    was missing entirely — routers/attendance.py's admin_edit_attendance()
+    wraps its `from app.models import AttendanceEditLog` in a broad
+    try/except that silently swallowed the resulting ImportError, so every
+    HR attendance correction succeeded on the surface while quietly never
+    writing an audit record. `reason` is mapped to the schema's actual
+    `edit_reason` column name so the existing router code (which already
+    passes `reason=...`) works unchanged.
+    """
+    __tablename__ = "attendance_edit_log"
+    log_id = Column(Integer, primary_key=True)
+    attendance_id = Column(Integer, ForeignKey("attendance_records.attendance_id"), nullable=False)
+    edited_by = Column(Integer, ForeignKey("employees.employee_id"), nullable=False)
+    old_status = Column(String(20))
+    new_status = Column(String(20))
+    old_check_in = Column(DateTime)
+    new_check_in = Column(DateTime)
+    old_check_out = Column(DateTime)
+    new_check_out = Column(DateTime)
+    reason = Column("edit_reason", Text)
+    edited_at = Column(DateTime)
+
+
 class AttendanceMonthlySummary(Base):
     __tablename__ = "attendance_monthly_summary"
     summary_id = Column(Integer, primary_key=True)

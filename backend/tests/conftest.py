@@ -94,7 +94,7 @@ def db_session(db_available):
     # small schema here; TRUNCATE ... CASCADE handles FK ordering for us).
     with engine.connect() as conn:
         tables = conn.execute(text(
-            "SELECT tablename FROM pg_tables WHERE schemaname='public'"
+            "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename != 'alembic_version'"
         )).scalars().all()
         if tables:
             conn.execute(text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE"))

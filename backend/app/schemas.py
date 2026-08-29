@@ -503,3 +503,24 @@ class LocationOut(BaseModel):
     state: Optional[str] = None
     country: Optional[str] = None
     is_active: bool
+
+
+class EmployeeCreate(BaseModel):
+    """
+    Onboarding a brand-new employee (HR Admin only). Previously there was no
+    way to create an employee through the portal at all — HR Admin could
+    only edit, reassign, or deactivate existing rows. employee_code is
+    server-generated (see org.py) rather than accepted here, so HR never has
+    to invent a unique code by hand or risk a collision.
+    """
+    full_name: str
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    department_id: Optional[int] = None
+    team_id: Optional[int] = None
+    designation_id: Optional[int] = None
+    manager_id: Optional[int] = None
+    date_of_joining: Optional[date] = None
+    employment_type: str = "full_time"

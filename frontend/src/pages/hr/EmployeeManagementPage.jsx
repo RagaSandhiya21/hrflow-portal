@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, Edit2, Users, Plus, Building2, Trash2, UserX } from 'lucide-react'
+import { Search, Edit2, Users, Plus, Building2, Trash2, UserX, UserPlus } from 'lucide-react'
 import { orgApi, hrProfileApi } from '../../api/services'
 import { PageSpinner, Alert, Modal, FormField, EmptyState, Confirm } from '../../components/ui'
 
@@ -20,6 +20,7 @@ export default function EmployeeManagementPage() {
   const [editTarget, setEditTarget] = useState(null)
   const [deactivateTarget, setDeactivateTarget] = useState(null)
   const [orgManagerOpen, setOrgManagerOpen] = useState(false)
+  const [addEmployeeOpen, setAddEmployeeOpen] = useState(false)
   const [error, setError] = useState(''); const [success, setSuccess] = useState('')
 
   async function loadDirectory(q = '') {
@@ -77,14 +78,19 @@ export default function EmployeeManagementPage() {
       </div>
 
       <div className="card mb-4">
-        <div className="relative">
-          <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
-          <input
-            className="w-full pl-9 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            placeholder="Search by name, employee code, or email…"
-            value={search}
-            onChange={e => onSearchChange(e.target.value)}
-          />
+        <div className="relative flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+            <input
+              className="w-full pl-9 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              placeholder="Search by name, employee code, or email…"
+              value={search}
+              onChange={e => onSearchChange(e.target.value)}
+            />
+          </div>
+          <button className="btn-primary text-sm py-2 px-3 shrink-0" onClick={() => setAddEmployeeOpen(true)}>
+            <UserPlus className="w-4 h-4" /> Add Employee
+          </button>
         </div>
       </div>
 
@@ -173,6 +179,21 @@ export default function EmployeeManagementPage() {
           designations={designations}
           onClose={() => setOrgManagerOpen(false)}
           onChanged={() => { loadOrgLookups(); loadDirectory(search) }}
+        />
+      )}
+
+      {addEmployeeOpen && (
+        <AddEmployeeModal
+          managers={managers}
+          departments={departments}
+          designations={designations}
+          onClose={() => setAddEmployeeOpen(false)}
+          onSaved={(newHireName) => {
+            setAddEmployeeOpen(false)
+            setSuccess(`${newHireName} has been onboarded.`)
+            loadDirectory(search)
+            loadOrgLookups()
+          }}
         />
       )}
     </div>
@@ -523,6 +544,108 @@ function EditEmployeeModal({ employee, managers, departments, designations, onCl
           </p>
         </div>
       )}
+    </Modal>
+  )
+}
+
+// ── Add Employee (onboarding) — POST /org/employees, previously missing ────────
+
+function AddEmployeeModal({ managers, departments, designations, onClose, onSaved }) {
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [departmentId, setDepartmentId] = useState('')
+  const [teamId, setTeamId] = useState('')
+  const [teams, setTeams] = useState([])
+  const [designationId, setDesignationId] = useState('')
+  const [managerId, setManagerId] = useState('')
+  const [dateOfJoining, setDateOfJoining] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!departmentId) { setTeams([]); setTeamId(''); return }
+    orgApi.teams(departmentId).then(r => setTeams(r.data)).catch(() => setTeams([]))
+  }, [departmentId])
+
+  async function save() {
+    if (!fullName.trim()) return setError('Full name is required')
+    if (!email.trim()) return setError('Email is required')
+    setSaving(true); setError('')
+    try {
+      const res = await orgApi.createEmployee({
+        full_name: fullName.trim(),
+        email: email.trim(),
+        phone: phone || undefined,
+        department_id: departmentId ? Number(departmentId) : undefined,
+        team_id: teamId ? Number(teamId) : undefined,
+        designation_id: designationId ? Number(designationId) : undefined,
+        manager_id: managerId ? Number(managerId) : undefined,
+        date_of_joining: dateOfJoining || undefined,
+      })
+      onSaved(res.data.full_name)
+    } catch (e) {
+      setError(e.response?.data?.detail || 'Failed to onboard employee')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Add Employee"
+      footer={<>
+        <button className="btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn-primary" onClick={save} disabled={saving}>
+          {saving ? 'Onboarding…' : 'Onboard Employee'}
+        </button>
+      </>}>
+      <Alert type="error" message={error} onDismiss={() => setError('')} />
+      <div className="space-y-4">
+        <FormField label="Full Name" required>
+          <input className="input" value={fullName} onChange={e => setFullName(e.target.value)}
+            placeholder="e.g. Priya Sharma" />
+        </FormField>
+        <FormField label="Email" required>
+          <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)}
+            placeholder="priya.sharma@company.com" />
+        </FormField>
+        <FormField label="Phone">
+          <input className="input" value={phone} onChange={e => setPhone(e.target.value)} />
+        </FormField>
+        <FormField label="Date of Joining">
+          <input className="input" type="date" value={dateOfJoining} onChange={e => setDateOfJoining(e.target.value)} />
+        </FormField>
+        <FormField label="Manager">
+          <select className="input" value={managerId} onChange={e => setManagerId(e.target.value)}>
+            <option value="">No manager assigned</option>
+            {managers.map(m => (
+              <option key={m.employee_id} value={m.employee_id}>
+                {m.full_name}{m.role !== 'manager' ? ' (will become a manager)' : ''}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Department">
+          <select className="input" value={departmentId} onChange={e => setDepartmentId(e.target.value)}>
+            <option value="">Unassigned</option>
+            {departments.map(d => <option key={d.department_id} value={d.department_id}>{d.department_name}</option>)}
+          </select>
+        </FormField>
+        <FormField label="Team">
+          <select className="input" value={teamId} onChange={e => setTeamId(e.target.value)} disabled={!departmentId}>
+            <option value="">{departmentId ? 'Unassigned' : 'Select a department first'}</option>
+            {teams.map(t => <option key={t.team_id} value={t.team_id}>{t.team_name}</option>)}
+          </select>
+        </FormField>
+        <FormField label="Designation">
+          <select className="input" value={designationId} onChange={e => setDesignationId(e.target.value)}>
+            <option value="">Unassigned</option>
+            {designations.map(d => <option key={d.designation_id} value={d.designation_id}>{d.title}</option>)}
+          </select>
+        </FormField>
+        <p className="text-xs text-gray-400">
+          An employee code is generated automatically. Leave balances for the current year are initialised
+          so the new hire's Leave screen isn't empty on day one.
+        </p>
+      </div>
     </Modal>
   )
 }

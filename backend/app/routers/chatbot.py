@@ -119,6 +119,7 @@ def _generate_answer(query_text: str, retrieved: list[dict]) -> tuple[str, float
         )
     top_score  = retrieved[0]["score"]
     gemini_key = settings.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+    groq_key   = settings.GROQ_API_KEY or os.environ.get("GROQ_API_KEY", "")
 
     if gemini_key:
         try:
@@ -147,8 +148,19 @@ def _generate_answer(query_text: str, retrieved: list[dict]) -> tuple[str, float
             return resp.text.strip(), min(0.95, top_score + 0.25), settings.GEMINI_MODEL_NAME
         except Exception as e:
             print(f"[gemini] error: {e}")
+            # Proposal Risk #2 mitigation: fall back to Groq specifically on
+            # a rate-limit/quota failure (the Gemini key here is capped at
+            # 20 requests/day - far tighter than the 250 RPD the proposal
+            # assumed). Any other Gemini failure falls through to the plain
+            # keyword-search extractive answer below, same as before.
+            if groq_key and rag_pipeline.is_rate_limit_error(e):
+                try:
+                    answer, model_name = rag_pipeline.generate_grounded_answer_groq(query_text, retrieved, groq_key)
+                    return answer, min(0.95, top_score + 0.25), model_name
+                except Exception as ge:
+                    print(f"[groq-fallback] error: {ge}")
 
-    # Keyword-search extractive fallback (no LLM key configured)
+    # Keyword-search extractive fallback (no LLM key configured, or every LLM failed)
     snippet = retrieved[0]["chunk_text"].strip()
     if len(snippet) > 700:
         snippet = snippet[:700] + "…"

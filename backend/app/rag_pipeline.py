@@ -223,6 +223,10 @@ def generate_grounded_answer(query_text: str, retrieved: list[dict], gemini_key:
     that context (the same groundedness contract the QA strategy's
     hallucination-detection eval script checks against). Returns
     (answer_text, model_name).
+
+    Raises on failure (including quota/rate-limit errors) so the caller
+    (routers/chatbot.py) can fall back to Groq — see
+    generate_grounded_answer_groq() below, and proposal Risk #2.
     """
     from langchain_google_genai import ChatGoogleGenerativeAI
     from langchain_core.prompts import ChatPromptTemplate
@@ -239,3 +243,47 @@ def generate_grounded_answer(query_text: str, retrieved: list[dict], gemini_key:
     chain = prompt | llm
     response = chain.invoke({"context": context, "question": query_text})
     return response.content.strip(), f"{settings.GEMINI_MODEL_NAME} (via LangChain)"
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    """
+    Best-effort detection of a Gemini quota/rate-limit failure vs. any other
+    error. Google's client surfaces these as 429 ResourceExhausted (google-
+    generativeai) or as an httpx/google.api_core exception whose message
+    mentions quota/rate-limit — string-matching is unfortunately the most
+    stable cross-version signal available without pinning to one exact
+    exception class that keeps moving between library versions.
+    """
+    msg = str(exc).lower()
+    return any(s in msg for s in (
+        "429", "quota", "rate limit", "rate-limit", "resourceexhausted",
+        "resource_exhausted", "exceeded your current quota",
+    ))
+
+
+def generate_grounded_answer_groq(query_text: str, retrieved: list[dict], groq_key: str) -> tuple[str, str]:
+    """
+    Fallback grounded-answer generation via Groq (Llama 3.3 70B) — the exact
+    mitigation the approved proposal's Risk #2 named for "Gemini API free
+    tier rate limits hit during testing", never implemented until now.
+    Only used for answer *generation*; embeddings stay on Gemini regardless
+    (Groq has no embeddings endpoint), so this doesn't touch retrieval.
+    """
+    from groq import Groq
+
+    context = "\n\n".join(f"[Source: {r['document_name']}]\n{r['chunk_text']}" for r in retrieved)
+    client = Groq(api_key=groq_key)
+    completion = client.chat.completions.create(
+        model=settings.GROQ_MODEL_NAME,
+        temperature=0.2,
+        messages=[
+            {"role": "system", "content": (
+                "You are an HR policy assistant. Answer the employee's question using ONLY "
+                "the context provided. Be concise, friendly, and accurate. If the context "
+                "doesn't contain the answer, say you're not sure and suggest escalating to HR."
+            )},
+            {"role": "user", "content": f"Context:\n{context}\n\nEmployee question: {query_text}\n\nAnswer:"},
+        ],
+    )
+    answer = completion.choices[0].message.content.strip()
+    return answer, f"{settings.GROQ_MODEL_NAME} (groq-fallback)"

@@ -105,6 +105,7 @@ export const notificationsApi = {
 // ── Org hierarchy / employee directory (HR Admin) ───────────────────────────────
 export const orgApi = {
   searchEmployees:    (q) => api.get('/org/employees', { params: { q } }),
+  createEmployee:     (body) => api.post('/org/employees', body),
   managers:           ()  => api.get('/org/managers'),
   deactivateEmployee: (employeeId) => api.delete(`/org/employees/${employeeId}`),
 

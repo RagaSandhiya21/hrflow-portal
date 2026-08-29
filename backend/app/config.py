@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     # our own server since the model runs on Google's infrastructure instead.
     GEMINI_EMBEDDING_MODEL_NAME: str = "models/gemini-embedding-001"
 
+    # ── Groq fallback LLM (proposal Risk #2 mitigation) ──────────────────────
+    # The approved proposal's own risk table named Groq/Llama 3.3 70B as the
+    # fallback the moment Gemini's free tier gets rate-limited — and in
+    # practice the provisioned Gemini key caps out at 20 requests/day, far
+    # tighter than the 250 RPD the proposal assumed. This was never wired up
+    # until now. Leave GROQ_API_KEY blank to disable — chatbot.py falls back
+    # further to keyword-search extraction if neither LLM is available.
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL_NAME: str = "llama-3.3-70b-versatile"
+
     # ── Microsoft Entra ID SSO ───────────────────────────────────────────────
     # Register an app in your Azure tenant (Azure Portal → Entra ID → App
     # registrations) and fill these in. USE_MOCK_SSO=true keeps the dev-only

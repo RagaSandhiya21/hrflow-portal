@@ -273,3 +273,88 @@ def test_employee_cannot_deactivate_another_employee(client, seeded):
     res = client.delete(f"/org/employees/{seeded.manager.employee_id}",
                          headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 403
+
+
+# ── Onboarding (POST /org/employees) — previously entirely missing ─────────────
+
+def test_hr_admin_can_onboard_new_employee(client, seeded, db_session):
+    from app.models import LeaveType, EmployeeLeaveBalance
+    lt = LeaveType(org_id=seeded.org.org_id, leave_type_name="Casual Leave",
+                    leave_code="CL", annual_quota=10, carryover_allowed=False)
+    db_session.add(lt); db_session.commit()
+
+    hr_token = seeded.token_for(seeded.hr_admin)
+    res = client.post(
+        "/org/employees",
+        json={
+            "full_name": "New Hire",
+            "email": "new.hire@test.com",
+            "department_id": seeded.dept.department_id,
+            "manager_id": seeded.manager.employee_id,
+        },
+        headers={"Authorization": f"Bearer {hr_token}"},
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["full_name"] == "New Hire"
+    assert body["role"] == "employee"
+    assert body["employee_code"].startswith("EMP")
+
+    # Leave balances for the current year should be initialised, not empty.
+    balances = (
+        db_session.query(EmployeeLeaveBalance)
+        .filter(EmployeeLeaveBalance.employee_id == body["employee_id"])
+        .all()
+    )
+    assert len(balances) == 1
+    assert balances[0].leave_type_id == lt.leave_type_id
+
+
+def test_onboard_new_employee_can_then_log_in(client, seeded):
+    hr_token = seeded.token_for(seeded.hr_admin)
+    res = client.post(
+        "/org/employees",
+        json={"full_name": "Another Hire", "email": "another.hire@test.com"},
+        headers={"Authorization": f"Bearer {hr_token}"},
+    )
+    assert res.status_code == 201, res.text
+
+    login_res = client.post("/auth/login", json={"email": "another.hire@test.com"})
+    assert login_res.status_code == 200
+    assert login_res.json()["employee"]["email"] == "another.hire@test.com"
+
+
+def test_cannot_onboard_employee_with_duplicate_email(client, seeded):
+    hr_token = seeded.token_for(seeded.hr_admin)
+    res = client.post(
+        "/org/employees",
+        json={"full_name": "Duplicate", "email": seeded.employee.email},
+        headers={"Authorization": f"Bearer {hr_token}"},
+    )
+    assert res.status_code == 409
+
+
+def test_onboarding_assigning_manager_elevates_employee_role(client, seeded, db_session):
+    """Assigning a plain employee as someone's manager at onboarding time
+    should elevate their role, same as the existing PUT .../assignment rule."""
+    hr_token = seeded.token_for(seeded.hr_admin)
+    res = client.post(
+        "/org/employees",
+        json={"full_name": "Reports To Employee", "email": "reports.to.emp@test.com",
+              "manager_id": seeded.employee.employee_id},
+        headers={"Authorization": f"Bearer {hr_token}"},
+    )
+    assert res.status_code == 201, res.text
+
+    db_session.refresh(seeded.employee)
+    assert seeded.employee.role == "manager"
+
+
+def test_employee_cannot_onboard_new_employee(client, seeded):
+    token = seeded.token_for(seeded.employee)
+    res = client.post(
+        "/org/employees",
+        json={"full_name": "Should Fail", "email": "should.fail@test.com"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 403

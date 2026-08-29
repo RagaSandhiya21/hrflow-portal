@@ -369,6 +369,28 @@ POLICY_DOCS = {
         "Employees who believe their attendance was recorded incorrectly may raise a regularisation request "
         "from the Attendance screen, which routes to their manager for approval.",
     ]),
+    # Restores the 5th document the approved proposal (§5, Module 5) actually
+    # named — "Legal/Compliance Doc" — which earlier seed data substituted
+    # with the Attendance policy above. The chatbot's legal_compliance FAQ
+    # category (see routers/chatbot.py CATEGORY_KEYWORDS) previously had no
+    # dedicated source document to ground answers in; this closes that gap.
+    "Legal & Compliance Policy": ("legal_compliance", [
+        "The organisation complies with the Provident Fund Act, the ESI Act, and applicable state Shops "
+        "and Establishments Acts across all locations of operation.",
+        "In line with the Maternity Benefit Act, eligible employees are entitled to 26 weeks of paid "
+        "maternity leave for the first two children, and 12 weeks for subsequent children. Commissioning "
+        "and adopting mothers are entitled to 12 weeks of paid leave.",
+        "Gratuity is payable under the Payment of Gratuity Act to any employee who has completed 5 or "
+        "more years of continuous service, calculated at 15 days of wages for every completed year of "
+        "service, at the time of separation.",
+        "The organisation maintains a zero-tolerance Prevention of Sexual Harassment (POSH) policy as "
+        "mandated by the Sexual Harassment of Women at Workplace (Prevention, Prohibition and Redressal) "
+        "Act, 2013, including a designated Internal Committee to receive and investigate complaints "
+        "confidentially.",
+        "All statutory filings (PF, ESI, Professional Tax, TDS) are the organisation's responsibility and "
+        "are remitted within the deadlines prescribed by the respective labour law authorities; employees "
+        "can request statutory contribution statements through an HR Request.",
+    ]),
 }
 
 chunk_counter = 0

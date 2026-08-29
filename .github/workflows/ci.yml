@@ -1,9 +1,15 @@
 # HRFlow CI — QA §10.5 requirement: "GitHub Actions CI pipeline running all
 # tests on every push with pass/fail badge on README."
 #
-# This intentionally stops at test/build/coverage — it does NOT deploy
-# anywhere (Azure Static Web Apps deployment is out of scope for this
-# workflow; wire that up separately once you're ready to go live).
+# Backend tests + coverage, frontend build, AND (new) an actual Azure Static
+# Web Apps deploy job — the RFP's minimum coverage requirement is explicitly
+# "Azure Static Web Apps frontend + FastAPI backend via GitHub Actions
+# CI/CD", and this workflow previously stopped at test/build only, with a
+# comment saying deployment was "out of scope for this round of fixes."
+# The deploy job below only runs on a push to main (not on PRs) and only if
+# AZURE_STATIC_WEB_APPS_API_TOKEN is configured as a repo secret (Azure
+# generates this token when you first connect the repo in the Azure
+# portal — see https://learn.microsoft.com/azure/static-web-apps/deploy-github).
 name: CI
 
 on:
@@ -56,15 +62,31 @@ jobs:
           DATABASE_URL: postgresql+psycopg2://hrflow_user:hrflow_pass@localhost:5432/hrflow_test
         run: alembic upgrade head
 
+      # Coverage gate raised from 60% to 80% — the test suite now sits at
+      # ~81% (see backend/tests/: attendance, hr_requests, it_requests,
+      # notifications, dashboard, and payslips routers all previously had
+      # zero dedicated coverage; a RAG retrieval-relevance/groundedness eval
+      # suite and a 5-scenario isolated E2E suite were also added), meeting
+      # the proposal's own Final Review target (§10.5: "≥80% by final review").
       - name: Run backend tests (Pytest + coverage)
         working-directory: backend
-        run: pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=60
+        run: pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
           name: backend-coverage
           path: backend/coverage.xml
+
+      # QA Report artifact (proposal §10.5: "QA Report: test results summary,
+      # per-component coverage metrics, RAG retrieval relevance scores, and
+      # groundedness benchmark results") — written by
+      # tests/test_rag_eval.py::test_write_rag_eval_report.
+      - name: Upload RAG eval report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-eval-report
+          path: backend/rag_eval_report.json
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -87,3 +109,25 @@ jobs:
         env:
           VITE_USE_MOCK_SSO: "true"
         run: npm run build
+
+  deploy-frontend:
+    name: Deploy frontend to Azure Static Web Apps
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend-tests, frontend-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Deploy to Azure Static Web Apps
+        id: deploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "/frontend"
+          output_location: "dist"
+          skip_app_build: false
+

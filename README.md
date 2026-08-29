@@ -226,27 +226,28 @@ export TEST_DATABASE_URL=postgresql+psycopg2://hrflow_user:hrflow_pass@localhost
 pytest --cov=app --cov-report=term-missing
 ```
 
-36 tests across `tests/`, covering:
+138 tests across `tests/`, covering:
 - **Auth correctness** — JWT issuance/decoding/tampering, real Entra ID token validation failure modes, the shared-admin resolution + access-log write, cross-role 403s.
 - **Self-service workflow accuracy + persistence** — leave apply → manager approve → balance update, re-queried from a fresh DB read.
 - **Data integrity** — cross-employee payslip access denied (403), manager can't approve a non-direct-report's leave.
-- **RAG retrieval + groundedness** — keyword-fallback retrieval returns the right source document; an out-of-scope query is correctly marked ungrounded; escalation tickets are created and visible to HR Admin.
-- **Org hierarchy CRUD** — HR-Admin-only writes, and that shared admin accounts can't be "reassigned" like a person.
+- **RAG retrieval + groundedness** — a labelled 20-query golden set (`test_rag_eval.py`) covering all 6 FAQ categories, asserting retrieval mismatch rate ≤15% and groundedness rate ≥85% against the real `/chatbot/query` endpoint — not just spot-checks. Out-of-scope queries are confirmed to never be presented as grounded.
+- **Attendance, HR Requests, IT Requests, Notifications, Dashboard, Payslips** — every router now has dedicated integration test coverage (previously all six had zero).
+- **5 isolated E2E scenarios** (`test_e2e_flows.py`) — login → leave apply → manager approve → notify; chatbot query → escalate → HR resolve → notify; HR request and IT request full lifecycles; payslip publish → employee download.
+- **Org hierarchy CRUD + onboarding** — HR-Admin-only writes, shared admin accounts can't be "reassigned" like a person, and `POST /org/employees` (new — HR Admin can now actually onboard a new employee, not just edit/deactivate existing ones).
 - **Payslip PDF generation** — produces valid, correctly-populated PDF bytes.
 
 Integration tests need a real Postgres database (the schema uses generated columns, ARRAY columns, and CHECK constraints that don't translate to SQLite) — set `TEST_DATABASE_URL`, or let CI's Postgres service container handle it. They're auto-skipped (not failed) if no test DB is reachable, so the pure unit tests (security/deps/rag_pipeline/payslip_pdf) always run.
 
-I ran the full suite in the environment I built this in, against a real Postgres 16 instance: **36 passed, 66% overall coverage.** Getting to the proposal's ≥80% target mostly means adding more router-path tests (attendance, IT requests, notifications) following the same pattern already established here.
+I ran the full suite against a real Postgres 16 instance: **138 passed, 4 skipped (opt-in migration-scratch-DB tests), 81% overall coverage** — meeting the proposal's ≥80% Final Review target.
 
 ---
 
-## CI/CD (new)
+## CI/CD
 
 `.github/workflows/ci.yml` runs on every push/PR:
-1. Spins up a real Postgres service container, runs the Pytest suite with coverage (fails the build below 60% — raise this as you add more tests).
+1. Spins up a real Postgres service container, runs the Pytest suite with coverage (fails the build below 80%, matching the measured suite above).
 2. Builds the frontend (`npm ci && npm run build`).
-
-**This workflow does not deploy anywhere** — Azure Static Web Apps deployment was explicitly out of scope for this round of fixes. Add a deploy job (`Azure/static-web-apps-deploy@v1`) once you're ready to wire that up.
+3. **Deploys the frontend to Azure Static Web Apps** (`Azure/static-web-apps-deploy@v1`) on every push to `main` — requires `AZURE_STATIC_WEB_APPS_API_TOKEN` as a repo secret (Azure generates this when you connect the repo). The backend continues to deploy via Render's own GitHub integration (a separate mechanism from GitHub Actions, matching the approved proposal's tech-stack table: "Render Free Tier (FastAPI backend via Docker)").
 
 ---
 
@@ -257,16 +258,15 @@ I ran the full suite in the environment I built this in, against a real Postgres
 | Auth + RBAC | Real Entra ID SSO (JWKS-validated) with dev mock fallback; shared HR/IT Admin accounts via group membership | ✅ |
 | Leave Management | Apply, approve, balance tracking, business-day calc, holiday blocking | ✅ |
 | Payslips | Published payslips list, breakdown, on-demand PDF via **PyMuPDF** | ✅ |
-| Attendance | Calendar view, monthly summary, regularisation requests + approval | ✅ |
+| Attendance | Calendar view, monthly summary, regularisation requests + approval, HR direct-edit audit log | ✅ |
 | My Profile | Self-service contact/address; HR-approval change requests + audit log | ✅ (blocked for shared admin accounts) |
 | HR Requests | Raise ticket, comments, HR Admin queue, status — **with live in-portal push** | ✅ |
 | IT Requests | Raise ticket, IT Admin queue, status history — **with live in-portal push** | ✅ |
-| Policy AI (RAG) | **Real ChromaDB + LangChain + Sentence-Transformers pipeline**, keyword fallback if Chroma unreachable | ✅ |
-| Org Hierarchy | Department/Team/Designation CRUD, employee reassignment — **HR Admin only** | ✅ (new) |
+| Policy AI (RAG) | **Real ChromaDB + LangChain pipeline, Gemini embeddings** (not Sentence-Transformers — see Deviation 1), keyword fallback if Chroma unreachable, **Groq fallback if Gemini is rate-limited** | ✅ |
+| Org Hierarchy + Onboarding | Department/Team/Designation CRUD, employee reassignment, **and now onboarding a brand-new employee** — **HR Admin only** | ✅ |
 | Notifications | Polling GET **+ real-time WebSocket push** | ✅ |
-| QA | Pytest suite, 36 tests, 66% coverage | ✅ (new) |
-| CI/CD | GitHub Actions: tests + coverage + frontend build | ✅ (new, no Azure deploy) |
-| Deployment (Azure Static Web Apps) | Out of scope for this round | ⛔ not done |
+| QA | Pytest suite, 138 tests, 81% coverage, RAG retrieval-relevance/groundedness eval, 5-scenario E2E suite | ✅ |
+| CI/CD | GitHub Actions: tests + coverage (80% gate) + frontend build + **Azure Static Web Apps deploy** | ✅ |
 
 ---
 

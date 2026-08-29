@@ -32,6 +32,17 @@ def test_is_available_false_when_chroma_unreachable():
     assert rag_pipeline.is_available() is False
 
 
+def test_is_rate_limit_error_detects_quota_failures():
+    assert rag_pipeline.is_rate_limit_error(Exception("429 Resource has been exhausted (check quota)"))
+    assert rag_pipeline.is_rate_limit_error(Exception("RESOURCE_EXHAUSTED: quota exceeded"))
+    assert rag_pipeline.is_rate_limit_error(Exception("You exceeded your current quota, please check your plan"))
+
+
+def test_is_rate_limit_error_ignores_other_failures():
+    assert not rag_pipeline.is_rate_limit_error(Exception("500 internal server error"))
+    assert not rag_pipeline.is_rate_limit_error(Exception("connection refused"))
+
+
 def test_reindex_all_from_postgres_noop_when_chroma_unreachable(db_session):
     """The startup self-heal hook (app/main.py) must never block API
     startup — reindex_all_from_postgres() has to no-op safely (return 0,

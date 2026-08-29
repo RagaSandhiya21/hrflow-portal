@@ -66,6 +66,85 @@ def test_escalation_flow_creates_ticket_visible_to_hr_admin(client, seeded, db_s
     assert any(t["employee_name"] == seeded.employee.full_name for t in queue_res.json())
 
 
+def test_groq_fallback_used_when_gemini_rate_limited(client, seeded, db_session, monkeypatch):
+    """
+    Proposal Risk #2 mitigation: 'Gemini API free tier rate limits hit
+    during testing -> Switch to Groq free tier (llama3 70b) as backup LLM.'
+    Never implemented until now (see app/rag_pipeline.generate_grounded_answer_groq).
+    This simulates a Gemini 429/quota failure and asserts the chatbot
+    transparently answers via Groq instead of dropping to the bare
+    keyword-extraction fallback.
+    """
+    _seed_policy_doc(db_session, seeded.org.org_id, "Leave Policy", [
+        "Employees are entitled to 10 days of Casual Leave and 10 days of Sick Leave per year.",
+    ])
+    from app import rag_pipeline
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "fake-gemini-key")
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "fake-groq-key")
+
+    class _FakeGeminiModel:
+        def __init__(self, *a, **kw): pass
+        def generate_content(self, prompt):
+            raise Exception("429 Resource has been exhausted (e.g. check quota).")
+
+    import google.generativeai as genai
+    monkeypatch.setattr(genai, "configure", lambda **kw: None)
+    monkeypatch.setattr(genai, "GenerativeModel", _FakeGeminiModel)
+    monkeypatch.setattr(
+        rag_pipeline, "generate_grounded_answer_groq",
+        lambda query_text, retrieved, groq_key: (
+            "Per the Leave Policy, you get 10 days of Casual Leave per year.",
+            "llama-3.3-70b-versatile (groq-fallback)",
+        ),
+    )
+
+    token = seeded.token_for(seeded.employee)
+    res = client.post("/chatbot/query", json={"query_text": "How many casual leave days do I get?"},
+                       headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "Casual Leave" in body["answer"]
+    assert body["is_grounded"] is True
+
+
+def test_gemini_non_rate_limit_error_does_not_trigger_groq(client, seeded, db_session, monkeypatch):
+    """A non-quota Gemini failure (bad prompt, network blip, etc.) should NOT
+    burn Groq quota — it should fall through to the plain keyword-extraction
+    answer, same as before this fallback existed."""
+    _seed_policy_doc(db_session, seeded.org.org_id, "Leave Policy", [
+        "Employees are entitled to 10 days of Casual Leave and 10 days of Sick Leave per year.",
+    ])
+    from app import rag_pipeline
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "fake-gemini-key")
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "fake-groq-key")
+
+    class _FakeGeminiModel:
+        def __init__(self, *a, **kw): pass
+        def generate_content(self, prompt):
+            raise Exception("500 internal server error")
+
+    groq_called = {"value": False}
+
+    def _fake_groq(*a, **kw):
+        groq_called["value"] = True
+        return "should not be used", "groq"
+
+    import google.generativeai as genai
+    monkeypatch.setattr(genai, "configure", lambda **kw: None)
+    monkeypatch.setattr(genai, "GenerativeModel", _FakeGeminiModel)
+    monkeypatch.setattr(rag_pipeline, "generate_grounded_answer_groq", _fake_groq)
+
+    token = seeded.token_for(seeded.employee)
+    res = client.post("/chatbot/query", json={"query_text": "How many casual leave days do I get?"},
+                       headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200, res.text
+    assert groq_called["value"] is False
+
+
 def test_only_hr_admin_can_upload_policy_documents(client, seeded):
     token = seeded.token_for(seeded.employee)
     res = client.post(

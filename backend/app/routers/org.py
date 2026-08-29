@@ -14,10 +14,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_employee, require_role
-from app.models import Department, Designation, Employee, Location, Team
+from app.models import (
+    Department, Designation, Employee, EmployeeLeaveBalance, LeaveType,
+    Location, Team,
+)
 from app.schemas import (
-    DepartmentIn, DepartmentOut, DesignationIn, DesignationOut,
-    LocationOut, TeamIn, TeamOut,
+    DepartmentIn, DepartmentOut, DesignationIn, DesignationOut, EmployeeCreate,
+    EmployeeOut, LocationOut, TeamIn, TeamOut,
 )
 
 router = APIRouter(prefix="/org", tags=["org-hierarchy"])
@@ -204,6 +207,93 @@ def list_locations(db: Session = Depends(get_db), current: Employee = Depends(ge
         .order_by(Location.location_name)
         .all()
     )
+
+
+# ── Onboarding a new employee ─────────────────────────────────────────────────
+
+@router.post("/employees", response_model=EmployeeOut, status_code=201)
+def create_employee(
+    body: EmployeeCreate,
+    db: Session = Depends(get_db),
+    current: Employee = Depends(require_role("hr_admin")),
+):
+    """
+    HR Admin onboards a brand-new employee. Previously missing entirely —
+    HR Admin could edit, reassign, and deactivate existing employees, but
+    had no way to create one through the portal.
+
+    employee_code is server-generated (EMP-prefixed, zero-padded employee_id)
+    so HR never has to invent a unique code by hand. Standard leave-type
+    balances (Casual/Sick/Privilege/Compensatory/WFH) are initialised for
+    the current year, mirroring what seed.py does for demo data, so the
+    new employee's Leave screen isn't empty on day one.
+    """
+    if db.query(Employee).filter(Employee.email == body.email).first():
+        raise HTTPException(status_code=409, detail="An employee with this email already exists")
+
+    if body.manager_id is not None:
+        manager = db.query(Employee).filter(Employee.employee_id == body.manager_id,
+                                             Employee.org_id == current.org_id).first()
+        if manager is None:
+            raise HTTPException(status_code=400, detail="manager_id does not exist")
+        if manager.is_shared_admin:
+            raise HTTPException(status_code=400, detail="A shared admin account cannot be assigned as a manager")
+
+    name_parts = body.full_name.strip().split(" ", 1)
+    first_name = body.first_name or name_parts[0]
+    last_name  = body.last_name or (name_parts[1] if len(name_parts) > 1 else "")
+
+    now = datetime.utcnow()
+    emp = Employee(
+        org_id           = current.org_id,
+        employee_code    = "PENDING",  # placeholder — replaced below once employee_id is assigned
+        email            = body.email,
+        full_name        = body.full_name,
+        first_name       = first_name,
+        last_name        = last_name,
+        phone            = body.phone,
+        department_id    = body.department_id,
+        team_id          = body.team_id,
+        designation_id   = body.designation_id,
+        manager_id       = body.manager_id,
+        date_of_joining  = body.date_of_joining or now.date(),
+        employment_type  = body.employment_type,
+        employment_status= "active",
+        role             = "employee",
+        is_shared_admin  = False,
+        is_active        = True,
+        created_at       = now,
+        updated_at       = now,
+    )
+    db.add(emp); db.flush()  # assigns employee_id
+
+    emp.employee_code = f"EMP{emp.employee_id:04d}"
+
+    # Elevate the assigned manager to the 'manager' role if they aren't
+    # already one — same rule PUT /employees/{id}/assignment applies.
+    if body.manager_id is not None:
+        manager = db.query(Employee).filter(Employee.employee_id == body.manager_id).first()
+        if manager.role == "employee":
+            manager.role = "manager"
+
+    # Seed this year's leave balances for every active leave type in the org
+    # (mirrors seed.py) so the new hire's Leave screen isn't empty.
+    year = now.year
+    leave_types = db.query(LeaveType).filter(LeaveType.org_id == current.org_id).all()
+    for lt in leave_types:
+        db.add(EmployeeLeaveBalance(
+            employee_id    = emp.employee_id,
+            leave_type_id  = lt.leave_type_id,
+            year           = year,
+            total_allotted = lt.annual_quota,
+            carried_over   = 0,
+            used_days      = 0,
+            pending_days   = 0,
+            last_updated   = now,
+        ))
+
+    db.commit(); db.refresh(emp)
+    return emp
 
 
 # ── Employee directory search (for HR Admin tools like Attendance Admin) ───────
