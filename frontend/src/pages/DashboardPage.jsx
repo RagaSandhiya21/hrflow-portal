@@ -103,13 +103,27 @@ export default function DashboardPage() {
           <StatCard icon={Calendar} label="Pending Leave" value={data?.pending_leave_requests ?? 0}
             to="/leave" color="yellow" sub="requests waiting" />
         )}
+        {isManager() && (
+          <StatCard icon={CheckCircle} label="Approvals Needed" value={data?.pending_approvals ?? 0}
+            to="/leave" color="orange" sub="your team's leave requests" />
+        )}
+        {isHRAdmin() && (
+          <>
+            <StatCard icon={CheckCircle} label="Approvals Needed" value={data?.pending_approvals ?? 0}
+              to="/leave" color="orange" sub="pending leave, org-wide" />
+            <StatCard icon={User} label="Profile Changes" value={data?.pending_change_requests ?? 0}
+              to="/profile" color="yellow" sub="awaiting HR review" />
+          </>
+        )}
         {!isITAdmin() && (
           <StatCard icon={ClipboardList} label="Open HR Requests" value={data?.open_hr_requests ?? 0}
-            to="/hr-requests" color="blue" sub="tickets open" />
+            to="/hr-requests" color="blue"
+            sub={isHRAdmin() ? "open tickets, org-wide" : "tickets open"} />
         )}
         {!isHRAdmin() && (
           <StatCard icon={Monitor} label="Open IT Requests" value={data?.open_it_requests ?? 0}
-            to="/it-requests" color="brand" sub="tickets open" />
+            to="/it-requests" color="brand"
+            sub={isITAdmin() ? "open tickets, org-wide" : "tickets open"} />
         )}
         {!isSharedAdmin && data?.latest_payslip_month && (
           <StatCard icon={FileText} label="Latest Payslip" value={data.latest_payslip_month}
@@ -181,7 +195,9 @@ export default function DashboardPage() {
           {[
             { to: '/leave',       icon: Calendar,       label: 'Apply Leave',      hide: isSharedAdmin },
             { to: '/payslips',    icon: FileText,        label: 'View Payslip',     hide: isSharedAdmin },
-            { to: '/hr-requests', icon: ClipboardList,   label: 'Raise HR Request', hide: isSharedAdmin || isITAdmin() },
+            { to: '/hr-requests', icon: ClipboardList,   label: isHRAdmin() ? 'Manage HR Queue' : 'Raise HR Request', hide: isITAdmin() },
+            { to: '/it-requests', icon: Monitor,         label: isITAdmin() ? 'Manage IT Queue' : 'Raise IT Request', hide: isHRAdmin() },
+            { to: '/profile',     icon: User,            label: 'Review Profile Changes', hide: !isHRAdmin() },
             { to: '/chatbot',     icon: MessageSquare,   label: 'Ask Policy AI',    hide: isITAdmin() },
           ].filter(a => !a.hide).map(({ to, icon: Icon, label }) => (
             <Link key={to} to={to}

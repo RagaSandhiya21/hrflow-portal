@@ -63,6 +63,24 @@ def summary(db: Session = Depends(get_db), current: Employee = Depends(get_curre
                 ITRequest.status.notin_(["resolved", "closed"]))
         .count()
     )
+    # HR Admin / IT Admin are shared functional accounts that never raise
+    # personal tickets, so the personal-scoped counts above are always zero
+    # for them — previously the dashboard silently showed "0 Open HR/IT
+    # Requests" for these roles regardless of how large the actual team
+    # queue was. Override with the org-wide open-queue count they actually
+    # need to see and act on.
+    if current.role == "hr_admin":
+        open_hr = (
+            db.query(HRRequest)
+            .filter(HRRequest.status.notin_(["resolved", "closed", "cancelled"]))
+            .count()
+        )
+    if current.role == "it_admin":
+        open_it = (
+            db.query(ITRequest)
+            .filter(ITRequest.status.notin_(["resolved", "closed"]))
+            .count()
+        )
 
     # Pending approvals
     pending_approvals = 0
