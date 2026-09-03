@@ -1,22 +1,34 @@
 """
 Email notification service.
 
-Configure SMTP in backend/.env:
+Preferred: Resend (HTTP-based email API, sends over HTTPS/443):
+    RESEND_API_KEY=re_xxxxxxxx
+    RESEND_FROM_EMAIL=HRFlow <onboarding@resend.dev>   # or your verified domain
+
+Fallback: raw SMTP (kept for hosts where outbound SMTP isn't blocked):
     SMTP_HOST=smtp.gmail.com
-    SMTP_PORT=587
+    SMTP_PORT=587          # or 465 for implicit SSL
     SMTP_USER=your-gmail@gmail.com
     SMTP_PASSWORD=your-app-password   # Gmail → Security → App passwords
 
-If SMTP_HOST is blank the functions print a log line and return silently —
-so the app works fully without email configured (local dev).
+If neither is configured, the functions print a log line and return
+silently — so the app works fully without email configured (local dev).
 
-Gmail app password setup:
+Why Resend is preferred: a real production send on Render (free tier)
+failed with "[Errno 101] Network is unreachable" on BOTH port 587
+(STARTTLS) and port 465 (implicit SSL) — Render blocks outbound SMTP
+entirely at the platform level, regardless of port. Resend sends over
+plain HTTPS, the same protocol already used successfully for Gemini/Groq
+calls, so it isn't subject to that restriction.
+
+Gmail app password setup (only needed for the SMTP fallback):
   1. Enable 2-factor auth on your Google account
   2. Go to myaccount.google.com → Security → App passwords
   3. Generate a password for "Mail" → copy the 16-char code
   4. Use that as SMTP_PASSWORD (not your real Gmail password)
 """
 import smtplib
+import httpx
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -24,22 +36,48 @@ from app.config import settings
 
 
 def _send(to_email: str, subject: str, html_body: str):
-    """Internal sender — silent on failure."""
-    if not getattr(settings, "SMTP_HOST", "") or not getattr(settings, "SMTP_USER", ""):
+    """Internal sender — silent on failure. Tries Resend (HTTP) first,
+    falls back to SMTP if only that's configured."""
+    resend_key = getattr(settings, "RESEND_API_KEY", "")
+    smtp_host  = getattr(settings, "SMTP_HOST", "")
+
+    if not resend_key and not (smtp_host and getattr(settings, "SMTP_USER", "")):
         print(f"[email-stub] Would send '{subject}' to {to_email}")
         return
+
+    full_subject = f"[HRFlow] {subject}"
+
+    if resend_key:
+        try:
+            resp = httpx.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_key}"},
+                json={
+                    "from": getattr(settings, "RESEND_FROM_EMAIL", "HRFlow <onboarding@resend.dev>"),
+                    "to": [to_email],
+                    "subject": full_subject,
+                    "html": html_body,
+                },
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            print(f"[email] Sent '{subject}' → {to_email} (via Resend)")
+            return
+        except Exception as e:
+            print(f"[email] Resend FAILED '{subject}' → {to_email}: {e}")
+            if not smtp_host:
+                return
+            print("[email] Falling back to SMTP...")
+
     try:
         msg = MIMEMultipart("alternative")
         msg["From"]    = settings.SMTP_USER
         msg["To"]      = to_email
-        msg["Subject"] = f"[HRFlow] {subject}"
+        msg["Subject"] = full_subject
         msg.attach(MIMEText(html_body, "html"))
         port = int(getattr(settings, "SMTP_PORT", 587))
         # Port 465 = implicit SSL from connection start (no STARTTLS).
         # Port 587 = plaintext connection upgraded via STARTTLS.
-        # Some hosts (Render's free tier included) block outbound 587
-        # entirely, surfacing as "[Errno 101] Network is unreachable" —
-        # 465 is the fallback that actually gets through on those hosts.
         if port == 465:
             with smtplib.SMTP_SSL(settings.SMTP_HOST, port) as s:
                 s.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
@@ -49,9 +87,9 @@ def _send(to_email: str, subject: str, html_body: str):
                 s.ehlo(); s.starttls(); s.ehlo()
                 s.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
                 s.send_message(msg)
-        print(f"[email] Sent '{subject}' → {to_email}")
+        print(f"[email] Sent '{subject}' → {to_email} (via SMTP)")
     except Exception as e:
-        print(f"[email] FAILED '{subject}' → {to_email}: {e}")
+        print(f"[email] SMTP FAILED '{subject}' → {to_email}: {e}")
 
 
 def _base(content: str) -> str:

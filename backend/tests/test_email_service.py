@@ -25,17 +25,69 @@ from app import email_service
 def test_send_is_a_no_op_without_smtp_config(monkeypatch, capsys):
     monkeypatch.setattr(settings, "SMTP_HOST", "")
     monkeypatch.setattr(settings, "SMTP_USER", "")
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "")
 
-    with patch("smtplib.SMTP") as mock_smtp:
+    with patch("smtplib.SMTP") as mock_smtp, patch("httpx.post") as mock_post:
         email_service._send("someone@test.com", "Test Subject", "<p>Body</p>")
         mock_smtp.assert_not_called()
+        mock_post.assert_not_called()
 
     captured = capsys.readouterr()
     assert "[email-stub]" in captured.out
     assert "Test Subject" in captured.out
 
 
+def test_send_uses_resend_when_api_key_configured(monkeypatch):
+    """Resend is preferred over SMTP whenever RESEND_API_KEY is set — this
+    was added after discovering, in production, that Render's free tier
+    blocks outbound SMTP entirely (both port 587 and 465 failed identically
+    with a raw socket-level [Errno 101]). Resend sends over plain HTTPS, so
+    it isn't subject to that restriction."""
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_key_123")
+    monkeypatch.setattr(settings, "RESEND_FROM_EMAIL", "HRFlow <onboarding@resend.dev>")
+    monkeypatch.setattr(settings, "SMTP_HOST", "")  # SMTP not even configured
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+
+    with patch("httpx.post", return_value=mock_response) as mock_post, \
+         patch("smtplib.SMTP") as mock_smtp:
+        email_service._send("employee@test.com", "Leave Approved", "<p>Hi</p>")
+
+    mock_smtp.assert_not_called()   # must not fall back to SMTP when Resend succeeds
+    mock_post.assert_called_once()
+    call_args, call_kwargs = mock_post.call_args
+    assert call_args[0] == "https://api.resend.com/emails"
+    assert call_kwargs["headers"]["Authorization"] == "Bearer re_test_key_123"
+    payload = call_kwargs["json"]
+    assert payload["to"] == ["employee@test.com"]
+    assert "Leave Approved" in payload["subject"]
+    assert payload["from"] == "HRFlow <onboarding@resend.dev>"
+
+
+def test_send_falls_back_to_smtp_when_resend_fails(monkeypatch):
+    """If Resend itself errors (bad key, service outage), and SMTP is also
+    configured, _send() must still attempt the SMTP fallback rather than
+    silently giving up."""
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_bad_key")
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.gmail.com")
+    monkeypatch.setattr(settings, "SMTP_PORT", 587)
+    monkeypatch.setattr(settings, "SMTP_USER", "hrflow@test.com")
+    monkeypatch.setattr(settings, "SMTP_PASSWORD", "app-password-123")
+
+    mock_server = MagicMock()
+    mock_server.__enter__.return_value = mock_server
+
+    with patch("httpx.post", side_effect=Exception("401 Unauthorized")), \
+         patch("smtplib.SMTP", return_value=mock_server) as mock_smtp:
+        email_service._send("employee@test.com", "Leave Approved", "<p>Hi</p>")
+
+    mock_smtp.assert_called_once_with("smtp.gmail.com", 587)
+    mock_server.send_message.assert_called_once()
+
+
 def test_send_connects_and_sends_when_smtp_configured(monkeypatch):
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "")  # Resend not configured
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.gmail.com")
     monkeypatch.setattr(settings, "SMTP_PORT", 587)
     monkeypatch.setattr(settings, "SMTP_USER", "hrflow@test.com")
@@ -65,6 +117,7 @@ def test_send_uses_implicit_ssl_on_port_465_not_starttls(monkeypatch):
     outbound port 587 entirely, surfacing as a raw socket-level
     "[Errno 101] Network is unreachable" rather than an auth error — 465 is
     the documented fallback that gets through on those hosts."""
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "")  # Resend not configured
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.gmail.com")
     monkeypatch.setattr(settings, "SMTP_PORT", 465)
     monkeypatch.setattr(settings, "SMTP_USER", "hrflow@test.com")
@@ -90,6 +143,7 @@ def test_send_failure_is_caught_and_logged_not_raised(monkeypatch, capsys):
     """A bad password or unreachable SMTP host must never crash the request
     that triggered the notification (e.g. approving leave) — it should log
     and move on."""
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "")  # Resend not configured
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.gmail.com")
     monkeypatch.setattr(settings, "SMTP_USER", "hrflow@test.com")
     monkeypatch.setattr(settings, "SMTP_PASSWORD", "wrong-password")
@@ -98,11 +152,12 @@ def test_send_failure_is_caught_and_logged_not_raised(monkeypatch, capsys):
         email_service._send("employee@test.com", "Subject", "<p>Body</p>")  # must not raise
 
     captured = capsys.readouterr()
-    assert "[email] FAILED" in captured.out
+    assert "[email] SMTP FAILED" in captured.out
     assert "535 Authentication failed" in captured.out
 
 
 def _configure_smtp(monkeypatch):
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "")  # Resend not configured
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.gmail.com")
     monkeypatch.setattr(settings, "SMTP_USER", "hrflow@test.com")
     monkeypatch.setattr(settings, "SMTP_PASSWORD", "app-password-123")

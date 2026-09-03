@@ -79,6 +79,19 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
+
+    # Resend (HTTP-based email API) — preferred over raw SMTP. Discovered
+    # live in production that Render's free tier blocks outbound SMTP
+    # entirely regardless of port (587 STARTTLS and 465 implicit-SSL both
+    # failed identically with "[Errno 101] Network is unreachable" — a
+    # protocol-level block, not a port-specific one). Resend sends over
+    # plain HTTPS (port 443), the same protocol already used successfully
+    # for Gemini/Groq calls, so it isn't subject to the same restriction.
+    # If RESEND_API_KEY is set, email_service.py uses it in preference to
+    # SMTP; SMTP remains supported as a fallback for hosts where outbound
+    # SMTP isn't blocked.
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "HRFlow <onboarding@resend.dev>"
     # Used as the "From" display name
     SMTP_FROM_NAME: str = "HRFlow Portal"
 
