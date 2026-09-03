@@ -38,7 +38,12 @@ services:
       retries: 10
 
   chromadb:
-    image: chromadb/chroma:latest
+    # Pinned to match the chromadb==0.5.15 Python client in requirements.txt.
+    # Using :latest causes client/server version-mismatch connection errors
+    # ("Could not connect to tenant default_tenant") — this was already
+    # documented as the intended fix but the actual image tag here still
+    # said :latest until now.
+    image: chromadb/chroma:0.5.15
     container_name: hrflow_chromadb
     restart: unless-stopped
     ports:
@@ -68,10 +73,12 @@ services:
       ENTRA_IT_ADMIN_GROUP_ID: ${ENTRA_IT_ADMIN_GROUP_ID:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL_NAME: ${GEMINI_MODEL_NAME:-gemini-flash-latest}
+      GEMINI_EMBEDDING_MODEL_NAME: ${GEMINI_EMBEDDING_MODEL_NAME:-models/gemini-embedding-001}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL_NAME: ${GROQ_MODEL_NAME:-llama-3.3-70b-versatile}
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
       CHROMA_COLLECTION: hr_policy_docs
-      EMBEDDING_MODEL_NAME: sentence-transformers/all-MiniLM-L6-v2
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}

@@ -36,7 +36,13 @@ class Settings(BaseSettings):
     # until now. Leave GROQ_API_KEY blank to disable — chatbot.py falls back
     # further to keyword-search extraction if neither LLM is available.
     GROQ_API_KEY: str = ""
-    GROQ_MODEL_NAME: str = "llama-3.3-70b-versatile"
+    # llama-3.3-70b-versatile was Groq's model at the time this fallback was
+    # first built, but Groq deprecated/removed it (discovered live while
+    # testing this fallback in production — see final-term doc EV-19 and
+    # Section 10). openai/gpt-oss-120b is the current working replacement;
+    # still overridable via GROQ_MODEL_NAME env var if Groq's catalog moves
+    # again.
+    GROQ_MODEL_NAME: str = "openai/gpt-oss-120b"
 
     # ── Microsoft Entra ID SSO ───────────────────────────────────────────────
     # Register an app in your Azure tenant (Azure Portal → Entra ID → App
