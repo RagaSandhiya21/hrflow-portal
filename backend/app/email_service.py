@@ -34,10 +34,21 @@ def _send(to_email: str, subject: str, html_body: str):
         msg["To"]      = to_email
         msg["Subject"] = f"[HRFlow] {subject}"
         msg.attach(MIMEText(html_body, "html"))
-        with smtplib.SMTP(settings.SMTP_HOST, int(getattr(settings, "SMTP_PORT", 587))) as s:
-            s.ehlo(); s.starttls(); s.ehlo()
-            s.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-            s.send_message(msg)
+        port = int(getattr(settings, "SMTP_PORT", 587))
+        # Port 465 = implicit SSL from connection start (no STARTTLS).
+        # Port 587 = plaintext connection upgraded via STARTTLS.
+        # Some hosts (Render's free tier included) block outbound 587
+        # entirely, surfacing as "[Errno 101] Network is unreachable" —
+        # 465 is the fallback that actually gets through on those hosts.
+        if port == 465:
+            with smtplib.SMTP_SSL(settings.SMTP_HOST, port) as s:
+                s.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                s.send_message(msg)
+        else:
+            with smtplib.SMTP(settings.SMTP_HOST, port) as s:
+                s.ehlo(); s.starttls(); s.ehlo()
+                s.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                s.send_message(msg)
         print(f"[email] Sent '{subject}' → {to_email}")
     except Exception as e:
         print(f"[email] FAILED '{subject}' → {to_email}: {e}")
